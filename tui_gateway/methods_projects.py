@@ -315,8 +315,9 @@ def _discover_repos_payload(
     return out
 
 
-# Not user conversations; subagent/compression children are dropped by include_children=False.
-_PROJECT_TREE_EXCLUDED_SOURCES = ["cron", "kanban", "oneshot"]
+# Not user conversations. Source filtering also hides automation roots without a parent;
+# include_children=False alone only drops subagent/compression children.
+_PROJECT_TREE_EXCLUDED_SOURCES = ["cron", "kanban", "oneshot", "tool", "subagent"]
 
 
 def _project_tree_row(r: dict) -> dict:

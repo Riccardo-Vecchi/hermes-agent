@@ -594,6 +594,67 @@ def _cached_repo_labels(home: Path) -> list[str]:
         return sorted(str(entry.get("label") or "") for entry in pdb.list_discovered_repos(conn))
 
 
+@pytest.mark.parametrize("in_project", [True, False], ids=["project", "home"])
+def test_project_tree_hides_automation_sessions(tmp_path, in_project):
+    """Automation roots must not leak into either tree RPC (#134697)."""
+    from tui_gateway.project_tree import NO_PROJECT_ID
+
+    home = _profile_dir(tmp_path, "launch")
+    folder = tmp_path / "workspace"
+    folder.mkdir()
+    project_id = (
+        _create_project(home, "Workspace", folder)["id"]
+        if in_project else NO_PROJECT_ID
+    )
+    visible_sources = ("cli", "tui", "desktop")
+    hidden_sources = ("cron", "kanban", "oneshot", "tool", "subagent")
+
+    with _serving_launch_profile(home):
+        for source in visible_sources + hidden_sources:
+            # A root subagent has no parent marker for include_children=False to hide.
+            server._db.create_session(source, source, cwd=str(folder) if in_project else None)
+            server._db.append_message(source, "user", f"hello from {source}")
+
+        tree = _call("projects.tree")
+        project = next(p for p in tree["projects"] if p["id"] == project_id)
+        assert project["sessionCount"] == len(visible_sources)
+        assert set(project["sessionIds"]) == set(visible_sources)
+        assert {s["id"] for s in project["previewSessions"]} == set(visible_sources)
+        assert set(tree["scoped_session_ids"]) == set(visible_sources)
+
+        drill = _call("projects.project_sessions", {"project_id": project_id})["project"]
+        assert drill["sessionCount"] == len(visible_sources)
+        assert {
+            s["id"] for repo in drill["repos"] for group in repo["groups"]
+            for s in group["sessions"]
+        } == set(visible_sources)
+        # Hiding automation in navigation must leave its transcript queryable.
+        assert all(server._db.get_session(source) is not None for source in hidden_sources)
+
+
+def test_project_tree_filters_automation_before_session_limit(tmp_path):
+    """Newer script runs must not consume the interactive conversation budget."""
+    home = _profile_dir(tmp_path, "launch")
+    folder = tmp_path / "workspace"
+    folder.mkdir()
+    project_id = _create_project(home, "Workspace", folder)["id"]
+
+    with _serving_launch_profile(home):
+        server._db.create_session("chat", "cli", cwd=str(folder))
+        started_at = server._db.get_session("chat")["started_at"]
+        server._db.append_message("chat", "user", "interactive chat", timestamp=started_at)
+        for index, source in enumerate(("tool", "subagent"), start=1):
+            server._db.create_session(source, source, cwd=str(folder))
+            server._db.append_message(source, "user", "automation", timestamp=started_at + index)
+
+        tree = _call("projects.tree", {"session_limit": 1})
+        assert tree["scoped_session_ids"] == ["chat"]
+        drill = _call(
+            "projects.project_sessions", {"project_id": project_id, "session_limit": 1}
+        )["project"]
+        assert drill["sessionIds"] == ["chat"]
+
+
 def test_projects_reads_are_scoped_to_the_requested_profile(monkeypatch, tmp_path):
     """A ``profile`` param reads that profile's projects.db AND its state.db."""
     launch_home = _profile_dir(tmp_path, "launch")
