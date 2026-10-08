@@ -397,11 +397,11 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
 
         if _clarify_has_audio and not _raw_clarify_reply:
             return _retain("voice transcription produced no usable text")
-        # Use the command parser on prepared text (which may be a voice transcript): absolute
-        # paths are answers, while command spellings leave the clarify pending for a retry.
+        # Parse prepared text: paths answer the prompt; command spellings leave it pending.
         if not _raw_clarify_reply or dataclasses.replace(event, text=_raw_clarify_reply).get_command():
             return None
-        _text_outcome = _clarify_mod.attempt_text_response_for_session(_quick_key, _raw_clarify_reply)
+        _text_outcome, _pending_clarify = _clarify_mod.attempt_text_response_for_session_detailed(
+            _quick_key, _raw_clarify_reply)
         if _text_outcome == _clarify_mod.TEXT_RESOLVED:
             logger.info(
                 "Gateway intercepted clarify text response (session=%s, id=%s)",
