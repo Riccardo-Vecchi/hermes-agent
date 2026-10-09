@@ -1653,13 +1653,13 @@ class CheckpointManager:
             "Checkpoint: dropping %d oversize file(s) (>%d MB) from index",
             len(oversize), self.max_file_size_mb,
         )
-        # Use --pathspec-from-file for safety with many paths.
+        # ls-files returned exact names: never let rm expand them as globs.
         # Chunk into manageable batches.
         BATCH = 200
         for i in range(0, len(oversize), BATCH):
             chunk = oversize[i:i + BATCH]
             _run_git(
-                ["rm", "--cached", "-f", "--quiet", "--"] + chunk,
+                ["--literal-pathspecs", "rm", "--cached", "-f", "--quiet", "--"] + chunk,
                 store, working_dir, index_file=index_file,
                 allowed_returncodes={128},
             )
